@@ -64,7 +64,7 @@ export default function createChatSearchParams(
   return Object.entries(paramMap).reduce((params, [key, value]) => {
     if (value != null) {
       if (Array.isArray(value)) {
-        params.set(key, key === 'stop' ? value.join(',') : JSON.stringify(value));
+        params.set(key, key === 'stop' || key === 'mcp' ? value.join(',') : JSON.stringify(value));
       } else {
         params.set(key, String(value));
       }
