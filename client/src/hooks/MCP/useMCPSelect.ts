@@ -33,19 +33,71 @@ export function useMCPSelect({
   const [mcpValues, setMCPValuesRaw] = useAtom(mcpValuesAtomFamily(mcpAtomKey));
   const [ephemeralAgent, setEphemeralAgent] = useRecoilState(ephemeralAgentByConvoId(key));
 
-  // Sync ephemeral agent MCP → Jotai atom (strip unconfigured servers)
+  /** * Handle URL Parameter & Clean Up
+   * 1. Reads ?mcp=mcp_server_name
+   * 2. Overwrites current selection to match URL.
+   * 3. Removes 'mcp' from the address bar so manual changes stick later.
+   */
   useEffect(() => {
-    const mcps = ephemeralAgent?.mcp;
-    if (Array.isArray(mcps) && mcps.length > 0 && configuredServers.size > 0) {
-      const activeMcps = mcps.filter((mcp) => configuredServers.has(mcp));
-      if (!isEqual(activeMcps, mcpValues)) {
-        setMCPValuesRaw(activeMcps);
-      }
-    } else if (Array.isArray(mcps) && mcps.length === 0 && mcpValues.length > 0) {
-      // Ephemeral agent explicitly has empty MCP (e.g., spec with no MCP servers) — clear atom
-      setMCPValuesRaw([]);
+    // Wait for backend servers to load
+    if (configuredServers.size === 0) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const mcpParam = params.get('mcp');
+
+    if (mcpParam) {
+      // Parse URL and filter valid servers
+      const requestedServers = mcpParam.split(',').map((s) => s.trim());
+      const validServers = requestedServers.filter((name) => configuredServers.has(name));
+
+      // Ignore 'current' state, replace with URL values
+      setMCPValuesRaw((current) => {
+        // If state is already identical, don't trigger a re-render
+        const isLengthSame = current.length === validServers.length;
+        const isContentSame = validServers.every((v) => current.includes(v));
+
+        if (isLengthSame && isContentSame) {
+          return current;
+        }
+
+        return validServers;
+      });
+
+      // Clean the URL after applying
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.delete('mcp');
+      window.history.replaceState({}, '', newUrl.toString());
     }
-  }, [ephemeralAgent?.mcp, setMCPValuesRaw, configuredServers, mcpValues]);
+  }, [configuredServers, setMCPValuesRaw, key]);
+
+  // Sync Jotai state with ephemeral agent state
+  useEffect(() => {
+    // If servers haven't loaded yet, do NOT attempt to filter/sync.
+    if (configuredServers.size === 0) return;
+
+    const mcps = ephemeralAgent?.mcp ?? [];
+    if (mcps.length === 1 && mcps[0] === Constants.mcp_clear) {
+      setMCPValuesRaw([]);
+    } else if (mcps.length > 0) {
+      // Strip out servers that are not available in the startup config
+      const activeMcps = mcps.filter((mcp) => configuredServers.has(mcp));
+
+      // Prevent unnecessary updates that might cause loops
+      setMCPValuesRaw((prev) => {
+        if (isEqual(prev, activeMcps)) return prev;
+        return activeMcps;
+      });
+    }
+  }, [ephemeralAgent?.mcp, setMCPValuesRaw, configuredServers]);
+
+  useEffect(() => {
+    setEphemeralAgent((prev) => {
+      if (!isEqual(prev?.mcp, mcpValues)) {
+        return { ...(prev ?? {}), mcp: mcpValues };
+      }
+      return prev;
+    });
+  }, [mcpValues, setEphemeralAgent]);
 
   // Write timestamp when MCP values change
   useEffect(() => {
