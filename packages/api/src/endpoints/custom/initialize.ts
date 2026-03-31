@@ -9,9 +9,10 @@ import type { TEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import type { BaseInitializeParams, InitializeResultBase, EndpointTokenConfig } from '~/types';
 import { getOpenAIConfig } from '~/endpoints/openai/config';
+import { isUserProvided, checkUserKeyExpiry } from '~/utils';
 import { getCustomEndpointConfig } from '~/app/config';
 import { fetchModels } from '~/endpoints/models';
-import { isUserProvided, checkUserKeyExpiry } from '~/utils';
+import { validateEndpointURL } from '~/auth';
 import { standardCache } from '~/cache';
 
 const { PROXY } = process.env;
@@ -31,7 +32,6 @@ function buildCustomOptions(
     customParams: endpointConfig.customParams,
     titleConvo: endpointConfig.titleConvo,
     titleModel: endpointConfig.titleModel,
-    forcePrompt: endpointConfig.forcePrompt,
     summaryModel: endpointConfig.summaryModel,
     modelDisplayLabel: endpointConfig.modelDisplayLabel,
     titleMethod: endpointConfig.titleMethod ?? 'completion',
@@ -122,6 +122,10 @@ export async function initializeCustom({
 
   if (!baseURL) {
     throw new Error(`${endpoint} Base URL not provided.`);
+  }
+
+  if (userProvidesURL) {
+    await validateEndpointURL(baseURL, endpoint);
   }
 
   let endpointTokenConfig: EndpointTokenConfig | undefined;

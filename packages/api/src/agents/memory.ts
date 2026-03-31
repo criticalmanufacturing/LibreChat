@@ -19,7 +19,8 @@ import type { TAttachment, MemoryArtifact } from 'librechat-data-provider';
 import type { BaseMessage, ToolMessage } from '@langchain/core/messages';
 import type { Response as ServerResponse } from 'express';
 import { GenerationJobManager } from '~/stream/GenerationJobManager';
-import { Tokenizer, resolveHeaders, createSafeUser } from '~/utils';
+import { resolveHeaders, createSafeUser } from '~/utils';
+import Tokenizer from '~/utils/tokenizer';
 
 type RequiredMemoryMethods = Pick<
   MemoryMethods,
@@ -369,7 +370,6 @@ ${memory ?? 'No existing memories'}`;
       }
     }
 
-    // Handle Bedrock with thinking enabled - temperature must be 1
     const bedrockConfig = finalLLMConfig as {
       additionalModelRequestFields?: { thinking?: unknown };
       temperature?: number;
@@ -380,6 +380,18 @@ ${memory ?? 'No existing memories'}`;
       bedrockConfig.temperature != null
     ) {
       (finalLLMConfig as unknown as Record<string, unknown>).temperature = 1;
+    }
+
+    const anthropicConfig = finalLLMConfig as {
+      thinking?: { type?: string };
+      temperature?: number;
+    };
+    if (
+      llmConfig?.provider === Providers.ANTHROPIC &&
+      anthropicConfig.thinking?.type === 'enabled' &&
+      anthropicConfig.temperature != null
+    ) {
+      delete (finalLLMConfig as Record<string, unknown>).temperature;
     }
 
     const llmConfigWithHeaders = finalLLMConfig as OpenAIClientOptions;
@@ -464,13 +476,21 @@ ${memory ?? 'No existing memories'}`;
     };
     const content = await run.processStream(inputs, config);
     if (content) {
-      logger.debug('Memory Agent processed memory successfully', content);
+      logger.debug('[MemoryAgent] Processed successfully', {
+        userId,
+        conversationId,
+        messageId,
+        provider: llmConfig?.provider,
+      });
     } else {
-      logger.warn('Memory Agent processed memory but returned no content');
+      logger.debug('[MemoryAgent] Returned no content', { userId, conversationId, messageId });
     }
     return await Promise.all(artifactPromises);
   } catch (error) {
-    logger.error('Memory Agent failed to process memory', error);
+    logger.error(
+      `[MemoryAgent] Failed to process memory | userId: ${userId} | conversationId: ${conversationId} | messageId: ${messageId}`,
+      { error },
+    );
   }
 }
 

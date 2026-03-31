@@ -3,12 +3,15 @@ const { createContentAggregator } = require('@librechat/agents');
 const {
   initializeAgent,
   validateAgentModel,
-  getCustomEndpointConfig,
-  createSequentialChainEdges,
   createEdgeCollector,
   filterOrphanedEdges,
+  GenerationJobManager,
+  getCustomEndpointConfig,
+  createSequentialChainEdges,
 } = require('@librechat/api');
 const {
+  ResourceType,
+  PermissionBits,
   EModelEndpoint,
   isAgentsEndpoint,
   getResponseSender,
@@ -18,8 +21,10 @@ const {
   createToolEndCallback,
   getDefaultHandlers,
 } = require('~/server/controllers/agents/callbacks');
+const { loadAgentTools, loadToolsForExecution } = require('~/server/services/ToolService');
+const { filterFilesByAgentAccess } = require('~/server/services/Files/permissions');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
-const { loadAgentTools } = require('~/server/services/ToolService');
+const { checkPermission } = require('~/server/services/PermissionService');
 const AgentClient = require('~/server/controllers/agents/client');
 const { getConvoFiles } = require('~/models/Conversation');
 const { processAddedConvo } = require('./addedConvo');
@@ -31,8 +36,10 @@ const db = require('~/models');
  * Creates a tool loader function for the agent.
  * @param {AbortSignal} signal - The abort signal
  * @param {string | null} [streamId] - The stream ID for resumable mode
+ * @param {boolean} [definitionsOnly=false] - When true, returns only serializable
+ *   tool definitions without creating full tool instances (for event-driven mode)
  */
-function createToolLoader(signal, streamId = null) {
+function createToolLoader(signal, streamId = null, definitionsOnly = false) {
   /**
    * @param {object} params
    * @param {ServerRequest} params.req
@@ -43,21 +50,33 @@ function createToolLoader(signal, streamId = null) {
    * @param {string} params.model
    * @param {AgentToolResources} params.tool_resources
    * @returns {Promise<{
-   * tools: StructuredTool[],
-   * toolContextMap: Record<string, unknown>,
-   * userMCPAuthMap?: Record<string, Record<string, string>>
+   *   tools?: StructuredTool[],
+   *   toolContextMap: Record<string, unknown>,
+   *   toolDefinitions?: import('@librechat/agents').LCTool[],
+   *   userMCPAuthMap?: Record<string, Record<string, string>>,
+   *   toolRegistry?: import('@librechat/agents').LCToolRegistry
    * } | undefined>}
    */
-  return async function loadTools({ req, res, agentId, tools, provider, model, tool_resources }) {
-    const agent = { id: agentId, tools, provider, model };
+  return async function loadTools({
+    req,
+    res,
+    tools,
+    model,
+    agentId,
+    provider,
+    tool_options,
+    tool_resources,
+  }) {
+    const agent = { id: agentId, tools, provider, model, tool_options };
     try {
       return await loadAgentTools({
         req,
         res,
         agent,
         signal,
-        tool_resources,
         streamId,
+        tool_resources,
+        definitionsOnly,
       });
     } catch (error) {
       logger.error('Error loading tools for agent ' + agentId, error);
@@ -80,8 +99,48 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
   const artifactPromises = [];
   const { contentParts, aggregateContent } = createContentAggregator();
   const toolEndCallback = createToolEndCallback({ req, res, artifactPromises, streamId });
+
+  /**
+   * Agent context store - populated after initialization, accessed by callback via closure.
+   * Maps agentId -> { userMCPAuthMap, agent, tool_resources, toolRegistry, openAIApiKey }
+   * @type {Map<string, {
+   *   userMCPAuthMap?: Record<string, Record<string, string>>,
+   *   agent?: object,
+   *   tool_resources?: object,
+   *   toolRegistry?: import('@librechat/agents').LCToolRegistry,
+   *   openAIApiKey?: string
+   * }>}
+   */
+  const agentToolContexts = new Map();
+
+  const toolExecuteOptions = {
+    loadTools: async (toolNames, agentId) => {
+      const ctx = agentToolContexts.get(agentId) ?? {};
+      logger.debug(`[ON_TOOL_EXECUTE] ctx found: ${!!ctx.userMCPAuthMap}, agent: ${ctx.agent?.id}`);
+      logger.debug(`[ON_TOOL_EXECUTE] toolRegistry size: ${ctx.toolRegistry?.size ?? 'undefined'}`);
+
+      const result = await loadToolsForExecution({
+        req,
+        res,
+        signal,
+        streamId,
+        toolNames,
+        agent: ctx.agent,
+        toolRegistry: ctx.toolRegistry,
+        userMCPAuthMap: ctx.userMCPAuthMap,
+        tool_resources: ctx.tool_resources,
+        actionsEnabled: ctx.actionsEnabled,
+      });
+
+      logger.debug(`[ON_TOOL_EXECUTE] loaded ${result.loadedTools?.length ?? 0} tools`);
+      return result;
+    },
+    toolEndCallback,
+  };
+
   const eventHandlers = getDefaultHandlers({
     res,
+    toolExecuteOptions,
     aggregateContent,
     toolEndCallback,
     collectedUsage,
@@ -114,11 +173,14 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
   const agentConfigs = new Map();
   const allowedProviders = new Set(appConfig?.endpoints?.[EModelEndpoint.agents]?.allowedProviders);
 
-  const loadTools = createToolLoader(signal, streamId);
+  /** Event-driven mode: only load tool definitions, not full instances */
+  const loadTools = createToolLoader(signal, streamId, true);
   /** @type {Array<MongoFile>} */
   const requestFiles = req.body.files ?? [];
   /** @type {string} */
   const conversationId = req.body.conversationId;
+  /** @type {string | undefined} */
+  const parentMessageId = req.body.parentMessageId;
 
   const primaryConfig = await initializeAgent(
     {
@@ -127,6 +189,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
       loadTools,
       requestFiles,
       conversationId,
+      parentMessageId,
       agent: primaryAgent,
       endpointOption,
       allowedProviders,
@@ -136,11 +199,26 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
       getConvoFiles,
       getFiles: db.getFiles,
       getUserKey: db.getUserKey,
+      getMessages: db.getMessages,
       updateFilesUsage: db.updateFilesUsage,
       getUserKeyValues: db.getUserKeyValues,
+      getUserCodeFiles: db.getUserCodeFiles,
       getToolFilesByIds: db.getToolFilesByIds,
+      getCodeGeneratedFiles: db.getCodeGeneratedFiles,
+      filterFilesByAgentAccess,
     },
   );
+
+  logger.debug(
+    `[initializeClient] Storing tool context for ${primaryConfig.id}: ${primaryConfig.toolDefinitions?.length ?? 0} tools, registry size: ${primaryConfig.toolRegistry?.size ?? '0'}`,
+  );
+  agentToolContexts.set(primaryConfig.id, {
+    agent: primaryAgent,
+    toolRegistry: primaryConfig.toolRegistry,
+    userMCPAuthMap: primaryConfig.userMCPAuthMap,
+    tool_resources: primaryConfig.tool_resources,
+    actionsEnabled: primaryConfig.actionsEnabled,
+  });
 
   const agent_ids = primaryConfig.agent_ids;
   let userMCPAuthMap = primaryConfig.userMCPAuthMap;
@@ -153,6 +231,22 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
     if (!agent) {
       logger.warn(
         `[processAgent] Handoff agent ${agentId} not found, skipping (orphaned reference)`,
+      );
+      skippedAgentIds.add(agentId);
+      return null;
+    }
+
+    const hasAccess = await checkPermission({
+      userId: req.user.id,
+      role: req.user.role,
+      resourceType: ResourceType.AGENT,
+      resourceId: agent._id,
+      requiredPermission: PermissionBits.VIEW,
+    });
+
+    if (!hasAccess) {
+      logger.warn(
+        `[processAgent] User ${req.user.id} lacks VIEW access to handoff agent ${agentId}, skipping`,
       );
       skippedAgentIds.add(agentId);
       return null;
@@ -178,6 +272,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
         loadTools,
         requestFiles,
         conversationId,
+        parentMessageId,
         endpointOption,
         allowedProviders,
       },
@@ -185,16 +280,31 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
         getConvoFiles,
         getFiles: db.getFiles,
         getUserKey: db.getUserKey,
+        getMessages: db.getMessages,
         updateFilesUsage: db.updateFilesUsage,
         getUserKeyValues: db.getUserKeyValues,
+        getUserCodeFiles: db.getUserCodeFiles,
         getToolFilesByIds: db.getToolFilesByIds,
+        getCodeGeneratedFiles: db.getCodeGeneratedFiles,
+        filterFilesByAgentAccess,
       },
     );
+
     if (userMCPAuthMap != null) {
       Object.assign(userMCPAuthMap, config.userMCPAuthMap ?? {});
     } else {
       userMCPAuthMap = config.userMCPAuthMap;
     }
+
+    /** Store handoff agent's tool context for ON_TOOL_EXECUTE callback */
+    agentToolContexts.set(agentId, {
+      agent,
+      toolRegistry: config.toolRegistry,
+      userMCPAuthMap: config.userMCPAuthMap,
+      tool_resources: config.tool_resources,
+      actionsEnabled: config.actionsEnabled,
+    });
+
     agentConfigs.set(agentId, config);
     return agent;
   }
@@ -221,6 +331,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
       }
     } catch (err) {
       logger.error(`[initializeClient] Error processing agent ${agentId}:`, err);
+      skippedAgentIds.add(agentId);
     }
   }
 
@@ -230,7 +341,12 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
       if (checkAgentInit(agentId)) {
         continue;
       }
-      await processAgent(agentId);
+      try {
+        await processAgent(agentId);
+      } catch (err) {
+        logger.error(`[initializeClient] Error processing chain agent ${agentId}:`, err);
+        skippedAgentIds.add(agentId);
+      }
     }
     const chain = await createSequentialChainEdges([primaryConfig.id].concat(agent_ids), '{convo}');
     collectEdges(chain);
@@ -242,21 +358,35 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
   const { userMCPAuthMap: updatedMCPAuthMap } = await processAddedConvo({
     req,
     res,
-    endpointOption,
-    modelsConfig,
-    logViolation,
     loadTools,
+    logViolation,
+    modelsConfig,
     requestFiles,
-    conversationId,
-    allowedProviders,
     agentConfigs,
-    primaryAgentId: primaryConfig.id,
     primaryAgent,
+    endpointOption,
     userMCPAuthMap,
+    conversationId,
+    parentMessageId,
+    allowedProviders,
+    primaryAgentId: primaryConfig.id,
   });
 
   if (updatedMCPAuthMap) {
     userMCPAuthMap = updatedMCPAuthMap;
+  }
+
+  for (const [agentId, config] of agentConfigs) {
+    if (agentToolContexts.has(agentId)) {
+      continue;
+    }
+    agentToolContexts.set(agentId, {
+      agent: config,
+      toolRegistry: config.toolRegistry,
+      userMCPAuthMap: config.userMCPAuthMap,
+      tool_resources: config.tool_resources,
+      actionsEnabled: config.actionsEnabled,
+    });
   }
 
   // Ensure edges is an array when we have multiple agents (multi-agent mode)
@@ -313,6 +443,10 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
     maxContextTokens: primaryConfig.maxContextTokens,
     endpoint: isEphemeralAgentId(primaryConfig.id) ? primaryConfig.endpoint : EModelEndpoint.agents,
   });
+
+  if (streamId) {
+    GenerationJobManager.setCollectedUsage(streamId, collectedUsage);
+  }
 
   return { client, userMCPAuthMap };
 };
