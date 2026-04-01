@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useAtom } from 'jotai';
 import isEqual from 'lodash/isEqual';
 import { useRecoilState } from 'recoil';
@@ -33,42 +33,8 @@ export function useMCPSelect({
   const [mcpValues, setMCPValuesRaw] = useAtom(mcpValuesAtomFamily(mcpAtomKey));
   const [ephemeralAgent, setEphemeralAgent] = useRecoilState(ephemeralAgentByConvoId(key));
 
-  /** * Handle URL Parameter & Clean Up
-   * 1. Reads ?mcp=mcp_server_name
-   * 2. Overwrites current selection to match URL.
-   * 3. Removes 'mcp' from the address bar so manual changes stick later.
-   */
-  useEffect(() => {
-    // Wait for backend servers to load
-    if (configuredServers.size === 0) return;
-
-    const params = new URLSearchParams(window.location.search);
-    const mcpParam = params.get('mcp');
-
-    if (mcpParam) {
-      // Parse URL and filter valid servers
-      const requestedServers = mcpParam.split(',').map((s) => s.trim());
-      const validServers = requestedServers.filter((name) => configuredServers.has(name));
-
-      // Ignore 'current' state, replace with URL values
-      setMCPValuesRaw((current) => {
-        // If state is already identical, don't trigger a re-render
-        const isLengthSame = current.length === validServers.length;
-        const isContentSame = validServers.every((v) => current.includes(v));
-
-        if (isLengthSame && isContentSame) {
-          return current;
-        }
-
-        return validServers;
-      });
-
-      // Clean the URL after applying
-      const newUrl = new URL(window.location.href);
-      newUrl.searchParams.delete('mcp');
-      window.history.replaceState({}, '', newUrl.toString());
-    }
-  }, [configuredServers, setMCPValuesRaw, key]);
+  // Track if we are currently applying a URL update to prevent sync-back overwrites
+  const isUpdatingFromURL = useRef(false);
 
   /** * Handle URL Parameter & Clean Up
    * 1. Reads ?mcp=mcp_server_name
@@ -87,57 +53,55 @@ export function useMCPSelect({
       const requestedServers = mcpParam.split(',').map((s) => s.trim());
       const validServers = requestedServers.filter((name) => configuredServers.has(name));
 
-      // Ignore 'current' state, replace with URL values
-      setMCPValuesRaw((current) => {
-        // If state is already identical, don't trigger a re-render
-        const isLengthSame = current.length === validServers.length;
-        const isContentSame = validServers.every((v) => current.includes(v));
+      if (validServers.length > 0) {
+        isUpdatingFromURL.current = true;
+        
+        // 1. Update UI Atom
+        setMCPValuesRaw(validServers);
+        
+        // 2. Update Ephemeral Agent (Recoil) immediately to stay in sync
+        setEphemeralAgent((prev) => ({ ...(prev ?? {}), mcp: validServers }));
 
-        if (isLengthSame && isContentSame) {
-          return current;
+        // 3. Update LocalStorage for persistence
+        if (storageContextKey) {
+          const envKey = `${LocalStorageKeys.LAST_MCP_}${storageContextKey}`;
+          localStorage.setItem(envKey, JSON.stringify(validServers));
+          setTimestamp(envKey);
         }
+      }
 
-        return validServers;
-      });
-
-      // Clean the URL after applying
+      // Clean the URL
       const newUrl = new URL(window.location.href);
       newUrl.searchParams.delete('mcp');
       window.history.replaceState({}, '', newUrl.toString());
+
+      // Release the lock after a short delay to allow React state to settle
+      setTimeout(() => { isUpdatingFromURL.current = false; }, 100);
     }
-  }, [configuredServers, setMCPValuesRaw, key]);
+  }, [configuredServers, setMCPValuesRaw, setEphemeralAgent, storageContextKey]);
 
   // Sync ephemeral agent MCP → Jotai atom (strip unconfigured servers)
   useEffect(() => {
     // If servers haven't loaded yet, do NOT attempt to filter/sync.
-    if (configuredServers.size === 0) return;
+    if (configuredServers.size === 0 || isUpdatingFromURL.current) return;
 
     const mcps = ephemeralAgent?.mcp ?? [];
+    
     if (mcps.length === 1 && mcps[0] === Constants.mcp_clear) {
       setMCPValuesRaw([]);
-    } else if (mcps.length > 0) {
-      // Strip out servers that are not available in the startup config
-    const mcps = ephemeralAgent?.mcp;
-    if (Array.isArray(mcps) && mcps.length > 0 && configuredServers.size > 0) {
+    } else if (Array.isArray(mcps)) {
       const activeMcps = mcps.filter((mcp) => configuredServers.has(mcp));
-      if (!isEqual(activeMcps, mcpValues)) {
-        setMCPValuesRaw(activeMcps);
-      }
-    } else if (Array.isArray(mcps) && mcps.length === 0 && mcpValues.length > 0) {
-      // Ephemeral agent explicitly has empty MCP (e.g., spec with no MCP servers) — clear atom
-      setMCPValuesRaw([]);
-    }
-  }, [ephemeralAgent?.mcp, setMCPValuesRaw, configuredServers, mcpValues]);
-
-      // Prevent unnecessary updates that might cause loops
+      
       setMCPValuesRaw((prev) => {
         if (isEqual(prev, activeMcps)) return prev;
         return activeMcps;
       });
     }
-  }, [ephemeralAgent?.mcp, setMCPValuesRaw, configuredServers]);
+  }, [ephemeralAgent?.mcp, configuredServers, setMCPValuesRaw]);
 
   useEffect(() => {
+    if (isUpdatingFromURL.current) return;
+
     setEphemeralAgent((prev) => {
       if (!isEqual(prev?.mcp, mcpValues)) {
         return { ...(prev ?? {}), mcp: mcpValues };
@@ -157,17 +121,12 @@ export function useMCPSelect({
   /** Stable memoized setter with dual-write to environment key */
   const setMCPValues = useCallback(
     (value: string[]) => {
-      if (!Array.isArray(value)) {
-        return;
-      }
+      if (!Array.isArray(value)) return;
       setMCPValuesRaw(value);
-      setEphemeralAgent((prev) => {
-        if (!isEqual(prev?.mcp, value)) {
-          return { ...(prev ?? {}), mcp: value };
-        }
-        return prev;
-      });
-      // Dual-write to environment key for new conversation defaults
+      
+      // Also update Recoil and Storage for manual changes
+      setEphemeralAgent((prev) => ({ ...(prev ?? {}), mcp: value }));
+      
       if (storageContextKey) {
         const envKey = `${LocalStorageKeys.LAST_MCP_}${storageContextKey}`;
         localStorage.setItem(envKey, JSON.stringify(value));
