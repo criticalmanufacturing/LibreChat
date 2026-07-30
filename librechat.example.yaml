@@ -354,9 +354,12 @@ actions:
 #   # include a port (`host:port`, `private.ip:port`, or `[ipv6]:port`) and must
 #   # not be URLs, paths, CIDR ranges, bare hosts/IPs, or public IP literals.
 #   # Hostname entries trust whatever IP they resolve to on the listed port.
+#   # Entries support `${ENV_VAR}` substitution, so the address can come from
+#   # the environment instead of being hardcoded (e.g. per-deployment hosts).
 #   allowedAddresses:
 #     - 'host.docker.internal:8080'
 #     - '127.0.0.1:8080'
+#     - '${MCP_ALLOWED_ADDRESS}'
 
 # Example MCP Servers Object Structure
 # mcpServers:
