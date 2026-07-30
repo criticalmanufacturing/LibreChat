@@ -76,16 +76,19 @@ export function useMCPSelect({
    * 2. Overwrites current selection to match URL.
    * 3. Removes 'mcp' from the address bar so manual changes stick later.
    */
+  const mcpSearchParam = useMemo(
+    () => new URLSearchParams(window.location.search).get('mcp'),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [window.location.search],
+  );
+
   useEffect(() => {
     // Wait for backend servers to load
     if (configuredServers.size === 0) return;
 
-    const params = new URLSearchParams(window.location.search);
-    const mcpParam = params.get('mcp');
-
-    if (mcpParam) {
+    if (mcpSearchParam) {
       // Parse URL and filter valid servers
-      const requestedServers = mcpParam.split(',').map((s) => s.trim());
+      const requestedServers = mcpSearchParam.split(',').map((s) => s.trim());
       const validServers = requestedServers.filter((name) => configuredServers.has(name));
 
       // Ignore 'current' state, replace with URL values
@@ -106,12 +109,22 @@ export function useMCPSelect({
       newUrl.searchParams.delete('mcp');
       window.history.replaceState({}, '', newUrl.toString());
     }
-  }, [configuredServers, setMCPValuesRaw, key]);
+  }, [configuredServers, setMCPValuesRaw, key, mcpSearchParam]);
 
   // Sync Jotai state with ephemeral agent state
   useEffect(() => {
     // If servers haven't loaded yet, do NOT attempt to filter/sync.
     if (configuredServers.size === 0) return;
+
+    /**
+     * `ephemeralAgentByConvoId` is keyed by `Constants.NEW_CONVO` for every not-yet-persisted
+     * conversation, so it can carry a stale `mcp` selection over from a *previous* new chat in
+     * the same tab. Defer to the URL-handling effect above while a `?mcp=` param is still
+     * present, regardless of which effect's async dependencies (servers query vs. ephemeral
+     * agent hydration) happen to resolve first — a one-shot flag tied to commit ordering isn't
+     * reliable here since that ordering varies with cache/network timing between calls.
+     */
+    if (mcpSearchParam) return;
 
     const mcps = ephemeralAgent?.mcp ?? [];
     if (mcps.length === 1 && mcps[0] === Constants.mcp_clear) {
@@ -126,7 +139,7 @@ export function useMCPSelect({
         return activeMcps;
       });
     }
-  }, [ephemeralAgent?.mcp, setMCPValuesRaw, configuredServers]);
+  }, [ephemeralAgent?.mcp, setMCPValuesRaw, configuredServers, mcpSearchParam]);
 
   useEffect(() => {
     setEphemeralAgent((prev) => {
