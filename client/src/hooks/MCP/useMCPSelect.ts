@@ -104,12 +104,28 @@ export function useMCPSelect({
         return validServers;
       });
 
+      /**
+       * Write `ephemeralAgent.mcp` here too, rather than waiting for the
+       * `mcpValues -> ephemeralAgent` sync effect further down to catch up on a later
+       * render. Both `mcpValuesAtomFamily('new')` (persisted to localStorage) and
+       * `ephemeralAgentByConvoId(NEW_CONVO)` (in-memory Recoil) outlive a single "open" —
+       * neither resets on an in-app close/reopen, only on a hard reload — so without this,
+       * a stale ephemeralAgent value from a *previous* open can keep re-asserting itself
+       * for a render or two after the URL value should have already won.
+       */
+      setEphemeralAgent((prev) => {
+        if (!isEqual(prev?.mcp, validServers)) {
+          return { ...(prev ?? {}), mcp: validServers };
+        }
+        return prev;
+      });
+
       // Clean the URL after applying
       const newUrl = new URL(window.location.href);
       newUrl.searchParams.delete('mcp');
       window.history.replaceState({}, '', newUrl.toString());
     }
-  }, [configuredServers, setMCPValuesRaw, key, mcpSearchParam]);
+  }, [configuredServers, setMCPValuesRaw, setEphemeralAgent, key, mcpSearchParam]);
 
   // Sync Jotai state with ephemeral agent state
   useEffect(() => {
