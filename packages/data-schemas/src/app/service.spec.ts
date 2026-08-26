@@ -146,3 +146,69 @@ describe('AppService assistants config', () => {
     );
   });
 });
+
+describe('AppService environment configuration', () => {
+  const originalIssuer = process.env.OPENID_ISSUER;
+  const originalAudience = process.env.OPENID_CLIENT_ID;
+  const originalMcpDomain = process.env.MCP_ALLOWED_DOMAIN;
+
+  beforeEach(() => {
+    process.env.OPENID_ISSUER = 'https://auth.example.com';
+    process.env.OPENID_CLIENT_ID = 'remote-agent-api';
+    process.env.MCP_ALLOWED_DOMAIN = '*.mcp.example.com';
+  });
+
+  afterEach(() => {
+    if (originalIssuer === undefined) {
+      delete process.env.OPENID_ISSUER;
+    } else {
+      process.env.OPENID_ISSUER = originalIssuer;
+    }
+
+    if (originalAudience === undefined) {
+      delete process.env.OPENID_CLIENT_ID;
+    } else {
+      process.env.OPENID_CLIENT_ID = originalAudience;
+    }
+
+    if (originalMcpDomain === undefined) {
+      delete process.env.MCP_ALLOWED_DOMAIN;
+    } else {
+      process.env.MCP_ALLOWED_DOMAIN = originalMcpDomain;
+    }
+  });
+
+  it('resolves MCP allowed domains and remote agent OIDC configuration', async () => {
+    const config = {
+      mcpSettings: {
+        allowedDomains: ['${MCP_ALLOWED_DOMAIN}'],
+      },
+      endpoints: {
+        [EModelEndpoint.agents]: {
+          remoteApi: {
+            auth: {
+              apiKey: { enabled: false },
+              oidc: {
+                enabled: true,
+                issuer: '${OPENID_ISSUER}',
+                audience: '${OPENID_CLIENT_ID}',
+              },
+            },
+          },
+        },
+      },
+    } as DeepPartial<TCustomConfig>;
+
+    const result = await AppService({ config });
+
+    expect(result.mcpSettings?.allowedDomains).toEqual(['*.mcp.example.com']);
+    expect(result.endpoints?.[EModelEndpoint.agents]?.remoteApi?.auth).toEqual({
+      apiKey: { enabled: false },
+      oidc: {
+        enabled: true,
+        issuer: 'https://auth.example.com',
+        audience: 'remote-agent-api',
+      },
+    });
+  });
+});

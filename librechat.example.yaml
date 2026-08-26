@@ -340,6 +340,8 @@ actions:
 # public destination not also listed.
 # Supports wildcards: '*.example.com' matches 'api.example.com', 'staging.example.com', etc.
 # Supports protocol/port restrictions: 'https://api.example.com:8443' restricts to specific protocol/port.
+# Entries support `${ENV_VAR}` substitution, so the domain can come from the
+# environment instead of being hardcoded (e.g. per-deployment hosts).
 # mcpSettings:
 #   allowedDomains:
 #     - 'host.docker.internal'    # Docker host access (required for Docker setups)
@@ -347,6 +349,7 @@ actions:
 #     - '*.example.com'           # Wildcard subdomain
 #     - 'https://secure.api.com'  # Protocol-restricted
 #     - 'http://internal:8080'    # Protocol and port restricted
+#     - '${MCP_ALLOWED_DOMAIN}'
 #   # allowedAddresses is an SSRF exemption list (private-IP-space only).
 #   # Hostname/IP + port pairs listed here bypass the default-deny block for that
 #   # one private service; public destinations remain reachable. Useful when you
@@ -428,6 +431,15 @@ endpoints:
   #     maxCatalogSkills: 20
   #   # (optional) Agent Capabilities available to all users. Omit the ones you wish to exclude. Defaults to list below.
   #   capabilities: ["deferred_tools", "execute_code", "file_search", "actions", "tools"]
+  #   # (optional) Authentication for remote agent API requests.
+  #   remoteApi:
+  #     auth:
+  #       apiKey:
+  #         enabled: false
+  #       oidc:
+  #         enabled: true
+  #         issuer: '${OPENID_ISSUER}'
+  #         audience: '${OPENID_CLIENT_ID}'
 
   # (optional) Custom request headers for the built-in OpenAI / Google endpoints.
   # Forwarded on every request to the provider (or an AI gateway / reverse proxy

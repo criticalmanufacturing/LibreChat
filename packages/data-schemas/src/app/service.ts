@@ -1,5 +1,6 @@
 import {
   EModelEndpoint,
+  extractEnvVariable,
   getConfigDefaults,
   skillSyncConfigSchema,
   summarizationConfigSchema,
@@ -121,7 +122,14 @@ export const AppService = async (params?: {
   const availableTools = systemTools;
 
   const mcpServersConfig = config.mcpServers || null;
-  const mcpSettings = config.mcpSettings || null;
+  const mcpSettings = config.mcpSettings
+    ? {
+        ...config.mcpSettings,
+        allowedDomains: config.mcpSettings.allowedDomains?.map((entry) =>
+          extractEnvVariable(entry),
+        ),
+      }
+    : null;
   const actions = config.actions;
   const registration = config.registration ?? configDefaults.registration;
   const interfaceConfig = await loadDefaultInterface({ config, configDefaults });
