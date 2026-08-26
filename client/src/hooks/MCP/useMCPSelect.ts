@@ -105,9 +105,8 @@ export function useMCPSelect({
       });
 
       /**
-       * Write `ephemeralAgent.mcp` here too, rather than waiting for the
-       * `mcpValues -> ephemeralAgent` sync effect further down to catch up on a later
-       * render. Both `mcpValuesAtomFamily('new')` (persisted to localStorage) and
+       * Write `ephemeralAgent.mcp` here too so both state layers update together.
+       * Both `mcpValuesAtomFamily('new')` (persisted to localStorage) and
        * `ephemeralAgentByConvoId(NEW_CONVO)` (in-memory Recoil) outlive a single "open" —
        * neither resets on an in-app close/reopen, only on a hard reload — so without this,
        * a stale ephemeralAgent value from a *previous* open can keep re-asserting itself
@@ -142,10 +141,13 @@ export function useMCPSelect({
      */
     if (mcpSearchParam) return;
 
-    const mcps = ephemeralAgent?.mcp ?? [];
-    if (mcps.length === 1 && mcps[0] === Constants.mcp_clear) {
+    const mcps = ephemeralAgent?.mcp;
+    if (!Array.isArray(mcps)) {
+      return;
+    }
+    if (mcps.length === 0 || (mcps.length === 1 && mcps[0] === Constants.mcp_clear)) {
       setMCPValuesRaw([]);
-    } else if (mcps.length > 0) {
+    } else {
       // Strip out servers that are not available in the startup config
       const activeMcps = mcps.filter((mcp) => configuredServers.has(mcp));
 
@@ -156,15 +158,6 @@ export function useMCPSelect({
       });
     }
   }, [ephemeralAgent?.mcp, setMCPValuesRaw, configuredServers, mcpSearchParam]);
-
-  useEffect(() => {
-    setEphemeralAgent((prev) => {
-      if (!isEqual(prev?.mcp, mcpValues)) {
-        return { ...(prev ?? {}), mcp: mcpValues };
-      }
-      return prev;
-    });
-  }, [mcpValues, setEphemeralAgent]);
 
   // Write timestamp when MCP values change
   useEffect(() => {
