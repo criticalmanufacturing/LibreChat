@@ -15,6 +15,7 @@ import { fileConfigSchema } from './file-config';
 import { apiBaseUrl } from './api-endpoints';
 import { FileSources } from './types/files';
 import { MCPServersSchema } from './mcp';
+import { envVarRegex } from './utils';
 export { MAX_SUBAGENTS } from './limits';
 
 export const defaultSocialLogins = ['google', 'facebook', 'openid', 'github', 'discord', 'saml'];
@@ -712,6 +713,11 @@ const remoteApiOidcUrlSchema = z
   .url()
   .refine(isRemoteOidcUrlAllowed, { message: 'must use https:// unless targeting localhost' });
 
+const remoteApiOidcIssuerSchema = z.string().refine(
+  (value) => envVarRegex.test(value) || remoteApiOidcUrlSchema.safeParse(value).success,
+  { message: 'must use https:// unless targeting localhost' },
+);
+
 const remoteApiOidcScopeSchema = z.string().refine((scope) => !scope.includes(','), {
   message: 'scopes must be space-separated',
 });
@@ -719,7 +725,7 @@ const remoteApiOidcScopeSchema = z.string().refine((scope) => !scope.includes(',
 const remoteApiOidcSchema = z
   .object({
     enabled: z.boolean().default(false),
-    issuer: remoteApiOidcUrlSchema.optional(),
+    issuer: remoteApiOidcIssuerSchema.optional(),
     audience: z.string().min(1).optional(),
     jwksUri: remoteApiOidcUrlSchema.optional(),
     scope: remoteApiOidcScopeSchema.optional(),

@@ -470,6 +470,27 @@ describe('agentsEndpointSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it('accepts environment placeholders for remote OIDC issuer and audience', () => {
+    const result = configSchema.safeParse({
+      version: '1.0',
+      endpoints: {
+        agents: {
+          remoteApi: {
+            auth: {
+              oidc: {
+                enabled: true,
+                issuer: '${OPENID_ISSUER}',
+                audience: '${OPENID_CLIENT_ID}',
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   it('requires HTTPS remote OIDC issuer and JWKS URLs outside localhost', () => {
     const insecureIssuer = agentsEndpointSchema.safeParse({
       remoteApi: {

@@ -125,10 +125,13 @@ export const AppService = async (params?: {
   const mcpSettings = config.mcpSettings
     ? {
         ...config.mcpSettings,
-        allowedAddresses: config.mcpSettings.allowedAddresses?.map((entry) =>
-          typeof entry === 'string' ? extractEnvVariable(entry) : entry,
-        ),
-      }
+      allowedDomains: config.mcpSettings.allowedDomains?.map((entry) =>
+        extractEnvVariable(entry),
+      ),
+      allowedAddresses: config.mcpSettings.allowedAddresses?.map((entry) =>
+        typeof entry === 'string' ? extractEnvVariable(entry) : entry,
+      ),
+    }
     : null;
   const actions = config.actions;
   const registration = config.registration ?? configDefaults.registration;
