@@ -187,6 +187,10 @@ export const conversationPreset: {
   verbosity: {
     type: StringConstructor;
   };
+  customVariables: {
+    type: MapConstructor;
+    of: StringConstructor;
+  };
 } = {
   endpoint: {
     type: String,
