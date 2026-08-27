@@ -62,6 +62,7 @@ export type TEndpointOption = Pick<
   // Assistant/Agent fields
   | 'assistant_id'
   | 'agent_id'
+  | 'customVariables'
   // UI/Display fields
   | 'iconURL'
   | 'greeting'
