@@ -1789,6 +1789,19 @@ describe('Conversation Operations', () => {
       const stored = await Conversation.findOne({ conversationId }).lean();
       expect(stored?.messages ?? []).toEqual([]);
     });
+
+    it('should serialize customVariables as a plain object (not a Mongoose Map)', async () => {
+      const convoData = {
+        ...mockConversationData,
+        customVariables: { region: 'us-east', theme: 'dark' },
+      };
+
+      const result = await saveConvo(mockCtx, convoData);
+
+      expect(result).not.toBeNull();
+      expect(result?.customVariables).not.toBeInstanceOf(Map);
+      expect(result?.customVariables).toEqual({ region: 'us-east', theme: 'dark' });
+    });
   });
 
   describe('isTemporary conversation handling', () => {

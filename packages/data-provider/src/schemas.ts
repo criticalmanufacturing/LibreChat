@@ -1210,6 +1210,7 @@ export const tConversationSchema = z.object({
   agent_id: z.string().optional(),
   /** Durable parent/child navigation for a subagent thread. */
   subagentThread: subagentThreadLineageSchema.optional(),
+  customVariables: z.record(z.string()).optional(),
   /* AWS Bedrock */
   region: z.string().optional(),
   maxTokens: coerceNumber.optional(),
@@ -1748,6 +1749,7 @@ export const compactAgentsBaseSchema = tConversationSchema.pick({
   agent_id: true,
   instructions: true,
   additional_instructions: true,
+  customVariables: true,
 });
 
 export const compactAgentsSchema = compactAgentsBaseSchema

@@ -2592,7 +2592,7 @@ export function createConversationMethods(
         }
       }
 
-      return conversation.toObject();
+      return conversation.toObject({ flattenMaps: true });
     } catch (error) {
       logger.error('[saveConvo] Error saving conversation', error);
       if (metadata?.context) {
