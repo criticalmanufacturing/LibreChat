@@ -13,6 +13,7 @@ import {
   hasActivePiiFields,
   hasActivePiiPatterns,
   replaceSpecialVars,
+  replaceCustomVars,
   providerEndpointMap,
 } from 'librechat-data-provider';
 import type {
@@ -2259,12 +2260,18 @@ export async function initializeAgent(
   }
 
   if (agent.instructions && agent.instructions !== '') {
-    const resolvedInstructions = replaceSpecialVars({
+    let resolvedInstructions = replaceSpecialVars({
       text: agent.instructions,
       user: user ? (user as unknown as TUser) : null,
       now: runtime.turnStartedAt,
       timezone: runtime.requestBody.timezone,
     });
+    if (endpointOption?.customVariables) {
+      resolvedInstructions = replaceCustomVars({
+        text: resolvedInstructions,
+        customVariables: endpointOption.customVariables,
+      });
+    }
     if (hasTemporalSpecialVars(agent.instructions)) {
       agent.instructions = undefined;
       appendAdditionalInstructions(agent, resolvedInstructions);

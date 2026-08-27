@@ -1964,6 +1964,7 @@ class AgentClient extends BaseClient {
           maxContextTokens: this.maxContextTokens,
           codeApprovalMode,
           ...persistedCodeEnvironmentDecision,
+          customVariables: this.options.customVariables,
         },
         // TODO: PARSE OPTIONS BY PROVIDER, MAY CONTAIN SENSITIVE DATA
         runOptions,

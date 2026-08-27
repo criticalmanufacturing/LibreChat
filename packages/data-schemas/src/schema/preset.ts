@@ -57,6 +57,7 @@ export interface IPreset extends Document {
   url_context?: boolean;
   disableStreaming?: boolean;
   fileTokenLimit?: number;
+  customVariables?: Record<string, string>;
   tenantId?: string;
 }
 
