@@ -1,4 +1,4 @@
-import { EModelEndpoint, agentsEndpointSchema } from 'librechat-data-provider';
+import { EModelEndpoint, agentsEndpointSchema, extractEnvVariable } from 'librechat-data-provider';
 import type { TCustomConfig, TAgentsEndpoint } from 'librechat-data-provider';
 
 /**
@@ -19,6 +19,23 @@ export function agentsConfigSetup(
     return defaultConfig || agentsEndpointSchema.parse({});
   }
 
-  const parsedConfig = agentsEndpointSchema.parse(agentsConfig);
+  const oidc = agentsConfig.remoteApi?.auth?.oidc;
+  const resolvedConfig = oidc
+    ? {
+        ...agentsConfig,
+        remoteApi: {
+          ...agentsConfig.remoteApi,
+          auth: {
+            ...agentsConfig.remoteApi?.auth,
+            oidc: {
+              ...oidc,
+              issuer: oidc.issuer ? extractEnvVariable(oidc.issuer) : oidc.issuer,
+              audience: oidc.audience ? extractEnvVariable(oidc.audience) : oidc.audience,
+            },
+          },
+        },
+      }
+    : agentsConfig;
+  const parsedConfig = agentsEndpointSchema.parse(resolvedConfig);
   return parsedConfig;
 }

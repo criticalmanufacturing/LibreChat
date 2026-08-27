@@ -45,6 +45,7 @@ import { isActionTool } from './types/tools';
 import { apiBaseUrl } from './api-endpoints';
 import { FileSources } from './types/files';
 import { MCPServersSchema } from './mcp';
+import { envVarRegex } from './utils';
 export {
   MAX_SUBAGENTS,
   MAX_SUBAGENTS_CEILING,
@@ -866,13 +867,18 @@ const remoteApiOidcUrlSchema = z
   .url()
   .refine(isRemoteOidcUrlAllowed, { message: 'must use https:// unless targeting localhost' });
 
+const remoteApiOidcIssuerSchema = z.string().refine(
+  (value) => envVarRegex.test(value) || remoteApiOidcUrlSchema.safeParse(value).success,
+  { message: 'must use https:// unless targeting localhost' },
+);
+
 const remoteApiOidcScopeSchema = z.string().refine((scope) => !scope.includes(','), {
   message: 'scopes must be space-separated',
 });
 
 const oidcAccessTokenSchema = z.object({
   enabled: z.boolean().default(false),
-  issuer: remoteApiOidcUrlSchema.optional(),
+  issuer: remoteApiOidcIssuerSchema.optional(),
   audience: z.string().min(1).optional(),
   jwksUri: remoteApiOidcUrlSchema.optional(),
 });
