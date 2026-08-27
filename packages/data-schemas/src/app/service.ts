@@ -3,6 +3,7 @@ import {
   EModelEndpoint,
   filtersConfigSchema,
   hasActiveFiltersConfig,
+  extractEnvVariable,
   getConfigDefaults,
   langfuseConfigSchema,
   skillSyncConfigSchema,
@@ -160,7 +161,14 @@ export const AppService = async (params?: {
   const availableTools = systemTools;
 
   const mcpServersConfig = config.mcpServers || null;
-  const mcpSettings = config.mcpSettings || null;
+  const mcpSettings = config.mcpSettings
+    ? {
+        ...config.mcpSettings,
+        allowedAddresses: config.mcpSettings.allowedAddresses?.map((entry) =>
+          typeof entry === 'string' ? extractEnvVariable(entry) : entry,
+        ),
+      }
+    : null;
   const actions = config.actions;
   const registration = config.registration ?? configDefaults.registration;
   const interfaceConfig = await loadDefaultInterface({ config, configDefaults });
