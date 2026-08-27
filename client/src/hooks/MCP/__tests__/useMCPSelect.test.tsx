@@ -111,6 +111,34 @@ describe('useMCPSelect', () => {
       expect(searchParams.has('mcp')).toBe(false);
       expect(searchParams.get('source')).toBe('shortcut');
     });
+
+    it('should apply the MCP parameter after another handler cleans the URL before servers load', async () => {
+      const { Wrapper } = createWrapper();
+      const initialServers = createMCPServers([]);
+      const loadedServers = createMCPServers(['server1', 'server2']);
+      const { result, rerender } = renderHook(({ servers }) => useMCPSelect({ servers }), {
+        wrapper: Wrapper,
+        initialProps: { servers: initialServers },
+      });
+
+      act(() => {
+        result.current.setMCPValues(['server1']);
+      });
+      await waitFor(() => {
+        expect(result.current.mcpValues).toEqual(['server1']);
+      });
+
+      window.history.replaceState({}, '', '/c/new?mcp=server2');
+      rerender({ servers: initialServers });
+
+      window.history.replaceState({}, '', '/c/new');
+      rerender({ servers: initialServers });
+      rerender({ servers: loadedServers });
+
+      await waitFor(() => {
+        expect(result.current.mcpValues).toEqual(['server2']);
+      });
+    });
   });
 
   describe('State Updates', () => {

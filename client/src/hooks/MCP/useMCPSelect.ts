@@ -76,19 +76,21 @@ export function useMCPSelect({
    * 2. Overwrites current selection to match URL.
    * 3. Removes 'mcp' from the address bar so manual changes stick later.
    */
-  const mcpSearchParam = useMemo(
-    () => new URLSearchParams(window.location.search).get('mcp'),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [window.location.search],
-  );
+  const pendingMCPParamRef = useRef<string | null>(null);
+  const mcpSearchParam = new URLSearchParams(window.location.search).get('mcp');
+  /** URL settings cleanup can run before MCP server discovery finishes. */
+  if (mcpSearchParam !== null) {
+    pendingMCPParamRef.current = mcpSearchParam;
+  }
+  const pendingMCPParam = pendingMCPParamRef.current;
 
   useEffect(() => {
     // Wait for backend servers to load
     if (configuredServers.size === 0) return;
 
-    if (mcpSearchParam) {
+    if (pendingMCPParam !== null) {
       // Parse URL and filter valid servers
-      const requestedServers = mcpSearchParam.split(',').map((s) => s.trim());
+      const requestedServers = pendingMCPParam.split(',').map((s) => s.trim());
       const validServers = requestedServers.filter((name) => configuredServers.has(name));
 
       // Ignore 'current' state, replace with URL values
@@ -123,8 +125,9 @@ export function useMCPSelect({
       const newUrl = new URL(window.location.href);
       newUrl.searchParams.delete('mcp');
       window.history.replaceState({}, '', newUrl.toString());
+      pendingMCPParamRef.current = null;
     }
-  }, [configuredServers, setMCPValuesRaw, setEphemeralAgent, key, mcpSearchParam]);
+  }, [configuredServers, setMCPValuesRaw, setEphemeralAgent, key, pendingMCPParam]);
 
   // Sync Jotai state with ephemeral agent state
   useEffect(() => {
@@ -134,12 +137,11 @@ export function useMCPSelect({
     /**
      * `ephemeralAgentByConvoId` is keyed by `Constants.NEW_CONVO` for every not-yet-persisted
      * conversation, so it can carry a stale `mcp` selection over from a *previous* new chat in
-     * the same tab. Defer to the URL-handling effect above while a `?mcp=` param is still
-     * present, regardless of which effect's async dependencies (servers query vs. ephemeral
-     * agent hydration) happen to resolve first — a one-shot flag tied to commit ordering isn't
-     * reliable here since that ordering varies with cache/network timing between calls.
+     * the same tab. Defer to the URL-handling effect above while a `?mcp=` override is pending,
+     * regardless of which effect's async dependencies (servers query vs. URL cleanup vs.
+     * ephemeral agent hydration) happen to resolve first.
      */
-    if (mcpSearchParam) return;
+    if (pendingMCPParam !== null) return;
 
     const mcps = ephemeralAgent?.mcp;
     if (!Array.isArray(mcps)) {
@@ -157,7 +159,7 @@ export function useMCPSelect({
         return activeMcps;
       });
     }
-  }, [ephemeralAgent?.mcp, setMCPValuesRaw, configuredServers, mcpSearchParam]);
+  }, [ephemeralAgent?.mcp, setMCPValuesRaw, configuredServers, pendingMCPParam]);
 
   // Write timestamp when MCP values change
   useEffect(() => {
