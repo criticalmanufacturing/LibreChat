@@ -52,6 +52,7 @@ describe('useMCPSelect', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     localStorage.clear();
+    window.history.replaceState({}, '', '/');
     mockStartupConfig = undefined;
   });
 
@@ -85,6 +86,58 @@ describe('useMCPSelect', () => {
       });
 
       expect(result.current.mcpValues).toEqual([]);
+    });
+  });
+
+  describe('URL Selection', () => {
+    it('should atomically apply valid MCP servers and remove only the MCP parameter', async () => {
+      window.history.replaceState({}, '', '/c/new?mcp=server1,missing,server2&source=shortcut');
+      const { Wrapper, servers } = createWrapper(['server1', 'server2']);
+
+      const TestComponent = () => {
+        const mcpHook = useMCPSelect({ servers });
+        const ephemeralAgent = useRecoilValue(ephemeralAgentByConvoId(Constants.NEW_CONVO));
+        return { mcpHook, ephemeralAgent };
+      };
+
+      const { result } = renderHook(() => TestComponent(), { wrapper: Wrapper });
+
+      await waitFor(() => {
+        expect(result.current.mcpHook.mcpValues).toEqual(['server1', 'server2']);
+        expect(result.current.ephemeralAgent?.mcp).toEqual(['server1', 'server2']);
+      });
+
+      const searchParams = new URLSearchParams(window.location.search);
+      expect(searchParams.has('mcp')).toBe(false);
+      expect(searchParams.get('source')).toBe('shortcut');
+    });
+
+    it('should apply the MCP parameter after another handler cleans the URL before servers load', async () => {
+      const { Wrapper } = createWrapper();
+      const initialServers = createMCPServers([]);
+      const loadedServers = createMCPServers(['server1', 'server2']);
+      const { result, rerender } = renderHook(({ servers }) => useMCPSelect({ servers }), {
+        wrapper: Wrapper,
+        initialProps: { servers: initialServers },
+      });
+
+      act(() => {
+        result.current.setMCPValues(['server1']);
+      });
+      await waitFor(() => {
+        expect(result.current.mcpValues).toEqual(['server1']);
+      });
+
+      window.history.replaceState({}, '', '/c/new?mcp=server2');
+      rerender({ servers: initialServers });
+
+      window.history.replaceState({}, '', '/c/new');
+      rerender({ servers: initialServers });
+      rerender({ servers: loadedServers });
+
+      await waitFor(() => {
+        expect(result.current.mcpValues).toEqual(['server2']);
+      });
     });
   });
 
