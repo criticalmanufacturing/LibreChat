@@ -211,6 +211,10 @@ export const conversationPreset: {
   verbosity: {
     type: StringConstructor;
   };
+  customVariables: {
+    type: MapConstructor;
+    of: StringConstructor;
+  };
 } = {
   endpoint: {
     type: String,
@@ -401,5 +405,9 @@ export const conversationPreset: {
   /** Verbosity control */
   verbosity: {
     type: String,
+  },
+  customVariables: {
+    type: Map,
+    of: String,
   },
 };

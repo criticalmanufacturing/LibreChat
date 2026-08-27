@@ -1835,6 +1835,7 @@ const initializeClientWithProvider = async ({
     attachments: primaryConfig.requestAttachments ?? primaryConfig.attachments,
     agentContextAttachmentsByAgentId,
     endpointType: endpointOption.endpointType,
+    customVariables: endpointOption.customVariables,
     resendFiles: primaryConfig.resendFiles ?? true,
     imageDetail: primaryConfig.imageDetail,
     maxContextTokens: primaryConfig.maxContextTokens,

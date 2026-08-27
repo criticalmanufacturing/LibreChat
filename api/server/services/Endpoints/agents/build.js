@@ -13,7 +13,8 @@ const loadAgent = (params) =>
   });
 
 const buildOptions = (req, endpoint, parsedBody, endpointType) => {
-  const { spec, iconURL, agent_id, chatProjectId, ...model_parameters } = parsedBody;
+  const { spec, iconURL, agent_id, chatProjectId, customVariables, ...model_parameters } =
+    parsedBody;
   const agentPromise = loadAgent({
     req,
     spec,
@@ -38,6 +39,7 @@ const buildOptions = (req, endpoint, parsedBody, endpointType) => {
     model_parameters,
     agent: agentPromise,
     addedConvo,
+    customVariables,
   });
 };
 
