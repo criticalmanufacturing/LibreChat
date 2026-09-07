@@ -114,6 +114,12 @@ COPY --from=data-provider-build /app/packages/data-provider/dist ./packages/data
 COPY --from=data-schemas-build /app/packages/data-schemas/dist ./packages/data-schemas/dist
 COPY --from=api-package-build /app/packages/api/dist ./packages/api/dist
 COPY --from=client-build /app/client/dist ./client/dist
+
+# Add a non-root user for running the API server, and make sure it has access to all files.
+RUN sed -i 's/^root:x:0:/&node,/' /etc/group &&\
+   find /app -name node_modules -prune -o -exec chown node:root {} + -exec chmod g=u {} +
+USER node
+
 # Propagate build metadata into runtime env so /api/config can expose it.
 # Declared here (after the heavy install/copy steps) so that commit/date
 # changing on every CI run does not bust the cache for those layers.
