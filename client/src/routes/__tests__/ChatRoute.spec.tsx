@@ -10,12 +10,24 @@ const mockFetchConversation = jest.fn();
 const mockHasSetConversation = { current: true };
 let mockConversation: Partial<TConversation> = { conversationId: 'chat-a' };
 const mockConfig = {};
+let mockModelsData: Record<string, never> | undefined = mockConfig;
 const mockRoles = { USER: {} };
 let mockAssistantListMap = {};
-const mockNewConversation = jest.fn(({ template }: { template?: Partial<TConversation> }) => {
-  mockConversation = { conversationId: 'new', ...template };
-  mockSetConversation();
-});
+let mockAgentsMap: Record<string, never> | undefined = {};
+let mockAwaitsAgents = false;
+let mockProjectQuery: { isLoading: boolean; data?: { _id: string } } = { isLoading: false };
+const mockNewConversation = jest.fn(
+  ({
+    template,
+    preset,
+  }: {
+    template?: Partial<TConversation>;
+    preset?: Partial<TConversation>;
+  }) => {
+    mockConversation = { conversationId: 'new', ...template, ...preset };
+    mockSetConversation();
+  },
+);
 
 jest.mock('recoil', () => ({
   useRecoilValue: () => false,
@@ -36,13 +48,13 @@ jest.mock('../useAuthRedirect', () => ({
   default: () => ({ isAuthenticated: true, roles: mockRoles }),
 }));
 jest.mock('librechat-data-provider/react-query', () => ({
-  useGetModelsQuery: () => ({ data: mockConfig }),
+  useGetModelsQuery: () => ({ data: mockModelsData }),
 }));
 jest.mock('~/data-provider', () => ({
   useGetStartupConfig: () => ({ data: mockConfig }),
   useGetEndpointsQuery: () => ({ data: mockConfig }),
   useListAgentsQuery: () => ({}),
-  useProjectQuery: () => ({}),
+  useProjectQuery: () => mockProjectQuery,
   useGetConvoIdQuery: (id: string, options: { enabled: boolean }) => {
     const { useQuery: query } = jest.requireActual('@tanstack/react-query');
     return query(['conversation', id], () => mockFetchConversation(id), {
@@ -61,7 +73,7 @@ jest.mock('~/hooks', () => ({
 }));
 jest.mock('~/Providers', () => ({
   ToolCallsMapProvider: ({ children }: { children: React.ReactNode }) => children,
-  useAgentsMapContext: () => mockConfig,
+  useAgentsMapContext: () => mockAgentsMap,
 }));
 jest.mock('@librechat/client', () => ({
   Spinner: () => <span />,
@@ -69,7 +81,7 @@ jest.mock('@librechat/client', () => ({
   useToastContext: () => ({ showToast: jest.fn() }),
 }));
 jest.mock('~/utils', () => ({
-  defaultSpecAwaitsAgents: () => false,
+  defaultSpecAwaitsAgents: () => mockAwaitsAgents,
   processValidSettings: () => ({}),
   getDefaultModelSpec: () => ({}),
   hasModelSelection: () => false,
@@ -107,7 +119,162 @@ beforeEach(() => {
   mockConversation = { conversationId: 'chat-a' };
   mockHasSetConversation.current = true;
   mockAssistantListMap = {};
+  mockModelsData = mockConfig;
+  mockAgentsMap = {};
+  mockAwaitsAgents = false;
+  mockProjectQuery = { isLoading: false };
   mockFetchConversation.mockImplementation(async (id: string) => ({ conversationId: id }));
+});
+
+it.each(['project', 'agent'] as const)(
+  'initializes customVariables after URL cleanup before the delayed hook runs while %s is pending',
+  async (gate) => {
+    const projectId = '0123456789abcdef01234567';
+    const retainedSearch = gate === 'project' ? `?projectId=${projectId}` : '';
+    const search = new URLSearchParams(retainedSearch);
+    search.set('custom_name', 'Alice');
+    search.set('custom_department', 'Engineering');
+    mockConversation = { conversationId: 'new' };
+    mockHasSetConversation.current = false;
+    if (gate === 'project') {
+      mockProjectQuery = { isLoading: true };
+    } else {
+      mockAgentsMap = undefined;
+      mockAwaitsAgents = true;
+    }
+
+    const { router } = setup([`/c/new?${search.toString()}`]);
+    expect(mockNewConversation).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await router.navigate(`/c/new${retainedSearch}`, { replace: true });
+    });
+    expect(router.state.location.search).toBe(retainedSearch);
+    expect(mockNewConversation).not.toHaveBeenCalled();
+    expect(mockConversation.customVariables).toBeUndefined();
+
+    act(() => {
+      if (gate === 'project') {
+        mockProjectQuery = { isLoading: false, data: { _id: projectId } };
+      } else {
+        mockAgentsMap = {};
+      }
+      mockSetConversation();
+    });
+
+    await waitFor(() => expect(mockHasSetConversation.current).toBe(true));
+    expect(mockNewConversation).toHaveBeenCalledTimes(1);
+    expect(mockConversation).toMatchObject({
+      conversationId: 'new',
+      customVariables: { name: 'Alice', department: 'Engineering' },
+    });
+    if (gate === 'project') {
+      expect(mockConversation.chatProjectId).toBe(projectId);
+    }
+  },
+);
+
+it.each(['models', 'assistants'] as const)(
+  'includes customVariables in the first %s initialization without waiting for the URL hook',
+  (catalog) => {
+    mockConversation = { conversationId: 'new' };
+    mockHasSetConversation.current = false;
+    if (catalog === 'assistants') {
+      mockModelsData = undefined;
+      mockAssistantListMap = { assistants: {}, azureAssistants: {} };
+    }
+
+    setup(['/c/new?custom_name=Alice&custom_empty=&custom_=ignored']);
+
+    expect(mockNewConversation).toHaveBeenCalledTimes(1);
+    expect(mockConversation.customVariables).toEqual({ name: 'Alice', empty: '' });
+  },
+);
+
+it('discards pending URL variables when leaving the new-chat route', async () => {
+  mockConversation = { conversationId: 'new' };
+  mockHasSetConversation.current = false;
+  mockAgentsMap = undefined;
+  mockAwaitsAgents = true;
+  const { router } = setup(['/c/new?custom_name=Alice']);
+
+  await act(async () => {
+    await router.navigate('/c/chat-a');
+  });
+  await waitFor(() => expect(mockConversation.conversationId).toBe('chat-a'));
+  await act(async () => {
+    await router.navigate('/c/new');
+  });
+  expect(mockConversation.conversationId).toBe('chat-a');
+
+  act(() => {
+    mockAgentsMap = {};
+    mockSetConversation();
+  });
+
+  await waitFor(() => expect(mockConversation.conversationId).toBe('new'));
+  expect(mockConversation.customVariables).toBeUndefined();
+});
+
+it.each(['project', 'agent'] as const)(
+  'preserves customVariables after URL cleanup while %s initialization is pending',
+  async (gate) => {
+    const projectId = '0123456789abcdef01234567';
+    const customVariables = { name: 'Alice', department: 'Engineering' };
+    const retainedSearch = gate === 'project' ? `?projectId=${projectId}` : '';
+    const initialSearch = new URLSearchParams(retainedSearch);
+    initialSearch.set('custom_name', customVariables.name);
+    initialSearch.set('custom_department', customVariables.department);
+    mockConversation = { conversationId: 'new' };
+    mockHasSetConversation.current = false;
+    if (gate === 'project') {
+      mockProjectQuery = { isLoading: true };
+    } else {
+      mockAgentsMap = undefined;
+      mockAwaitsAgents = true;
+    }
+
+    const { router } = setup([`/c/new?${initialSearch.toString()}`]);
+    expect(mockNewConversation).not.toHaveBeenCalled();
+
+    // Simulate useQueryParams applying its preset and replacing the URL after cleanup.
+    await act(async () => {
+      mockNewConversation({ preset: { customVariables } });
+      await router.navigate(`/c/new${retainedSearch}`, { replace: true });
+    });
+    expect(router.state.location.search).toBe(retainedSearch);
+    expect(mockNewConversation).toHaveBeenCalledTimes(1);
+    expect(mockHasSetConversation.current).toBe(false);
+    expect(mockConversation.customVariables).toEqual(customVariables);
+
+    act(() => {
+      if (gate === 'project') {
+        mockProjectQuery = { isLoading: false, data: { _id: projectId } };
+      } else {
+        mockAgentsMap = {};
+      }
+      mockSetConversation();
+    });
+
+    await waitFor(() => expect(mockHasSetConversation.current).toBe(true));
+    expect(mockNewConversation).toHaveBeenCalledTimes(2);
+    expect(mockConversation).toMatchObject({ conversationId: 'new', customVariables });
+    if (gate === 'project') {
+      expect(mockConversation.chatProjectId).toBe(projectId);
+    }
+  },
+);
+
+it('does not carry customVariables from a saved conversation into a new chat', async () => {
+  mockConversation = { conversationId: 'chat-a', customVariables: { name: 'Alice' } };
+  const { router } = setup();
+
+  await act(async () => {
+    await router.navigate('/c/new');
+  });
+
+  await waitFor(() => expect(mockConversation.conversationId).toBe('new'));
+  expect(mockConversation.customVariables).toBeUndefined();
 });
 
 it('reconciles Back and Forward with each route, including new chat', async () => {
