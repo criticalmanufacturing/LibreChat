@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRecoilCallback, useRecoilValue } from 'recoil';
 import { useParams, useSearchParams } from 'react-router-dom';
@@ -58,6 +58,34 @@ export default function ChatRoute() {
   const index = 0;
   const [searchParams, setSearchParams] = useSearchParams();
   const { conversationId = '' } = useParams();
+  const pendingUrlVariables = useRef<{
+    conversationId: string;
+    searchParams: URLSearchParams | null;
+    customVariables?: Record<string, string>;
+  }>({ conversationId, searchParams: null });
+  // Capture before either initialization gate or the delayed URL hook can clean up the URL.
+  if (
+    pendingUrlVariables.current.conversationId !== conversationId ||
+    pendingUrlVariables.current.searchParams !== searchParams
+  ) {
+    const entries: [string, string][] = [];
+    if (conversationId === Constants.NEW_CONVO) {
+      searchParams.forEach((value, key) => {
+        if (key.startsWith('custom_') && key.length > 7) {
+          entries.push([key.slice(7), value]);
+        }
+      });
+    }
+    const retainedVariables =
+      pendingUrlVariables.current.conversationId === conversationId
+        ? pendingUrlVariables.current.customVariables
+        : undefined;
+    pendingUrlVariables.current = {
+      conversationId,
+      searchParams,
+      customVariables: entries.length > 0 ? Object.fromEntries(entries) : retainedVariables,
+    };
+  }
   const projectIdParam = searchParams.get('projectId');
   const chatProjectId = isValidChatProjectId(projectIdParam) ? projectIdParam : null;
   useIdChangeEffect(conversationId);
@@ -194,12 +222,12 @@ export default function ChatRoute() {
     const queryParams: Record<string, string> = {};
     searchParams.forEach((value, key) => {
       if (
-          key !== 'prompt' &&
-          key !== 'q' &&
-          key !== 'submit' &&
-          key !== 'projectId' &&
-          !key.startsWith('custom_')
-        ) {
+        key !== 'prompt' &&
+        key !== 'q' &&
+        key !== 'submit' &&
+        key !== 'projectId' &&
+        !key.startsWith('custom_')
+      ) {
         queryParams[key] = value;
       }
     });
@@ -240,10 +268,18 @@ export default function ChatRoute() {
       const spec = urlSpec ?? result?.default ?? result?.last ?? result?.softDefault;
       const specPreset = spec ? getModelSpecPreset(spec) : undefined;
 
-      if (Object.keys(querySettings).length > 0) {
-        return mergeQuerySettingsWithSpec(specPreset, querySettings);
+      const preset =
+        Object.keys(querySettings).length > 0
+          ? mergeQuerySettingsWithSpec(specPreset, querySettings)
+          : specPreset;
+
+      const customVariables =
+        pendingUrlVariables.current.customVariables ??
+        (isDraftNewConvo ? conversation?.customVariables : undefined);
+      if (customVariables != null) {
+        return { ...preset, customVariables };
       }
-      return specPreset;
+      return preset;
     };
 
     if (isNewConvo && endpointsQuery.data && modelsQuery.data) {
@@ -257,6 +293,7 @@ export default function ChatRoute() {
         ...(preset ? { preset } : {}),
       });
 
+      pendingUrlVariables.current.customVariables = undefined;
       hasSetConversation.current = true;
     } else if (initialConvoQuery.data && endpointsQuery.data && modelsQuery.data) {
       logger.log('conversation', 'ChatRoute initialConvoQuery', initialConvoQuery.data);
@@ -304,6 +341,7 @@ export default function ChatRoute() {
         template: projectTemplate,
         ...(preset ? { preset } : {}),
       });
+      pendingUrlVariables.current.customVariables = undefined;
       hasSetConversation.current = true;
     } else if (
       initialConvoQuery.data &&
@@ -339,6 +377,7 @@ export default function ChatRoute() {
     queryClient,
     conversation?.chatProjectId,
     conversation?.conversationId,
+    conversation?.customVariables,
   ]);
 
   if (endpointsQuery.isLoading || modelsQuery.isLoading) {

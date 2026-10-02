@@ -131,6 +131,18 @@ export function useMCPSelect({
   }
   const pendingMCPParam = pendingMCPParamRef.current;
 
+  /** Drop persisted selections the chat menu no longer offers. Runs on the atom
+   *  itself so a selection survives with no ephemeral agent to sync from. */
+  useEffect(() => {
+    if (!canPruneSelections || mcpValues.length === 0) {
+      return;
+    }
+    const activeMcpValues = mcpValues.filter((mcp) => retainedServers.has(mcp));
+    if (activeMcpValues.length !== mcpValues.length) {
+      setMCPValuesRaw(activeMcpValues);
+    }
+  }, [canPruneSelections, mcpValues, retainedServers, setMCPValuesRaw]);
+
   useEffect(() => {
     // Wait for backend servers to load
     if (configuredServers.size === 0) return;
@@ -176,11 +188,16 @@ export function useMCPSelect({
     }
   }, [configuredServers, setMCPValuesRaw, setEphemeralAgent, key, pendingMCPParam]);
 
-  // Sync Jotai state with ephemeral agent state
+  /**
+   * Mirror the ephemeral agent's MCP list into this instance's atom.
+   *
+   * Every instance mirrors, owner or not: the action paths (`initializeServer`,
+   * the revoke handler) build their next selection from `mcpValues`, so an
+   * instance left unmirrored would write a stale list back through
+   * `setMCPValues` — authenticating one server would drop another. Only the
+   * pruning inside is owner-gated.
+   */
   useEffect(() => {
-    // If servers haven't loaded yet, do NOT attempt to filter/sync.
-    if (configuredServers.size === 0) return;
-
     /**
      * `ephemeralAgentByConvoId` is keyed by `Constants.NEW_CONVO` for every not-yet-persisted
      * conversation, so it can carry a stale `mcp` selection over from a *previous* new chat in
@@ -191,22 +208,34 @@ export function useMCPSelect({
     if (pendingMCPParam !== null) return;
 
     const mcps = ephemeralAgent?.mcp;
-    if (!Array.isArray(mcps)) {
-      return;
-    }
-    if (mcps.length === 0 || (mcps.length === 1 && mcps[0] === Constants.mcp_clear)) {
+    if (Array.isArray(mcps) && mcps.length > 0) {
+      const activeMcps = canPruneSelections ? mcps.filter((mcp) => retainedServers.has(mcp)) : mcps;
+      /** The ephemeral agent is what carries the selection to the server, so a
+       *  hidden name has to leave it too, not just the dropdown's atom. */
+      if (activeMcps.length !== mcps.length) {
+        setEphemeralAgent((prev) => {
+          if (!Array.isArray(prev?.mcp) || isEqual(prev.mcp, activeMcps)) {
+            return prev;
+          }
+          return { ...prev, mcp: activeMcps };
+        });
+      }
+      if (!isEqual(activeMcps, mcpValues)) {
+        setMCPValuesRaw(activeMcps);
+      }
+    } else if (Array.isArray(mcps) && mcps.length === 0 && mcpValues.length > 0) {
+      // Ephemeral agent explicitly has empty MCP (e.g., spec with no MCP servers) — clear atom
       setMCPValuesRaw([]);
-    } else {
-      // Strip out servers that are not available in the startup config
-      const activeMcps = mcps.filter((mcp) => configuredServers.has(mcp));
-
-      // Prevent unnecessary updates that might cause loops
-      setMCPValuesRaw((prev) => {
-        if (isEqual(prev, activeMcps)) return prev;
-        return activeMcps;
-      });
     }
-  }, [ephemeralAgent?.mcp, setMCPValuesRaw, configuredServers, pendingMCPParam]);
+  }, [
+    ephemeralAgent?.mcp,
+    setEphemeralAgent,
+    setMCPValuesRaw,
+    retainedServers,
+    canPruneSelections,
+    mcpValues,
+    pendingMCPParam,
+  ]);
 
   // Write timestamp when MCP values change
   useEffect(() => {
