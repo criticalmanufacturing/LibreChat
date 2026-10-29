@@ -1,6 +1,6 @@
-import { useEffect, useCallback, useRef } from 'react';
-import { useRecoilValue } from 'recoil';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import isEqual from 'lodash/isEqual';
+import { useRecoilValue } from 'recoil';
 import { useSearchParams } from 'react-router-dom';
 import { QueryClient, useQueryClient } from '@tanstack/react-query';
 import { QueryKeys, EModelEndpoint, PermissionBits } from 'librechat-data-provider';
@@ -56,6 +56,7 @@ export default function useQueryParams({
   const MAX_SETTINGS_WAIT_MS = 3000;
   const processedRef = useRef(false);
   const pendingSubmitRef = useRef(false);
+  const [pendingSubmit, setPendingSubmit] = useState(false);
   const settingsAppliedRef = useRef(false);
   const submissionHandledRef = useRef(false);
   const promptTextRef = useRef<string | null>(null);
@@ -233,6 +234,7 @@ export default function useQueryParams({
 
     submissionHandledRef.current = true;
     pendingSubmitRef.current = false;
+    setPendingSubmit(false);
 
     methods.setValue('text', promptTextRef.current, { shouldValidate: true });
 
@@ -245,6 +247,20 @@ export default function useQueryParams({
 
     setSearchParams(getPreservedSearchParams(), { replace: true });
   }, [methods, submitMessage, setSearchParams, getPreservedSearchParams]);
+
+  // Tie the fallback to pending submission, rather than setup-effect cleanup.
+  useEffect(() => {
+    if (!pendingSubmit) {
+      return;
+    }
+    settingsTimeoutRef.current = setTimeout(processSubmission, MAX_SETTINGS_WAIT_MS);
+    return () => {
+      if (settingsTimeoutRef.current) {
+        clearTimeout(settingsTimeoutRef.current);
+        settingsTimeoutRef.current = null;
+      }
+    };
+  }, [pendingSubmit, processSubmission]);
 
   useEffect(() => {
     const processQueryParams = () => {
@@ -333,17 +349,7 @@ export default function useQueryParams({
         if (hasSettings) {
           // Settings are changing, defer submission
           pendingSubmitRef.current = true;
-
-          // Set a timeout to handle the case where settings might never fully apply
-          settingsTimeoutRef.current = setTimeout(() => {
-            if (!submissionHandledRef.current && pendingSubmitRef.current) {
-              logger.log(
-                'conversation',
-                'Settings application timeout, proceeding with submission',
-              );
-              processSubmission();
-            }
-          }, MAX_SETTINGS_WAIT_MS);
+          setPendingSubmit(true);
         } else {
           methods.setValue('text', decodedPrompt, { shouldValidate: true });
           textAreaRef.current.focus();
@@ -372,9 +378,6 @@ export default function useQueryParams({
 
     return () => {
       clearInterval(intervalId);
-      if (settingsTimeoutRef.current) {
-        clearTimeout(settingsTimeoutRef.current);
-      }
     };
   }, [
     searchParams,
@@ -415,7 +418,7 @@ export default function useQueryParams({
         processSubmission();
       }
     }
-  }, [conversation, processSubmission, areSettingsApplied]);
+  }, [pendingSubmit, conversation, processSubmission, areSettingsApplied]);
 
   const { isAuthenticated } = useAuthContext();
   const agentsMap = useAgentsMap({ isAuthenticated });

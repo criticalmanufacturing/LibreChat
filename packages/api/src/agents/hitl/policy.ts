@@ -437,6 +437,8 @@ export const RESUME_CONTEXT_KEYS = [
   'spec',
   'model',
   'promptPrefix',
+  // Rebuild the same instructions from URL/MES variables after an ask-user pause.
+  'customVariables',
   'ephemeralAgent',
   'codeApprovalMode',
   'codeEnvironmentMode',
