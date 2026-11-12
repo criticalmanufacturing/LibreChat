@@ -13,6 +13,7 @@ const {
   findOpenIDUser,
   getOpenIdEmail,
   getOpenIdIssuer,
+  getOpenIdLocalHttpOptions,
   getBalanceConfig,
   selectOpenIdRole,
   getTokenCacheTtlMs,
@@ -903,6 +904,7 @@ async function setupOpenId() {
   try {
     const usePKCE = isEnabled(process.env.OPENID_USE_PKCE);
     const shouldGenerateNonce = isEnabled(process.env.OPENID_GENERATE_NONCE);
+    const issuer = new URL(process.env.OPENID_ISSUER);
 
     /** @type {ClientMetadata} */
     const clientMetadata = {
@@ -924,12 +926,17 @@ async function setupOpenId() {
 
     /** @type {Configuration} */
     openidConfig = await client.discovery(
-      new URL(process.env.OPENID_ISSUER),
+      issuer,
       process.env.OPENID_CLIENT_ID,
       clientMetadata,
       undefined,
       {
         [client.customFetch]: customFetch,
+        ...getOpenIdLocalHttpOptions(
+          issuer,
+          isEnabled(process.env.OPENID_ALLOW_INSECURE_LOCALHOST),
+          client.allowInsecureRequests,
+        ),
       },
     );
 

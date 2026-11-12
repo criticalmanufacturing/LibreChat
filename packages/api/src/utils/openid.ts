@@ -1,6 +1,27 @@
 const MASKED_VALUE = '***MASKED***';
 const SAFE_OPENID_HEADER_VALUES = new Set(['content-length', 'content-type']);
 
+/**
+ * Deployment-only opt-in for a local HTTP identity provider. Supplying this as a
+ * discovery execute hook enables HTTP for discovery and the resulting client,
+ * including code exchange, userinfo and refresh requests, without bypassing TLS.
+ */
+export function getOpenIdLocalHttpOptions<T>(
+  issuer: URL,
+  enabled: boolean,
+  allowInsecureRequests: T,
+): { execute?: T[] } {
+  if (!enabled || issuer.protocol !== 'http:') {
+    return {};
+  }
+
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(issuer.hostname)) {
+    throw new Error('Insecure OpenID is only allowed for loopback HTTP issuers');
+  }
+
+  return { execute: [allowInsecureRequests] };
+}
+
 function isSensitiveFieldName(key: string): boolean {
   const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
   return (

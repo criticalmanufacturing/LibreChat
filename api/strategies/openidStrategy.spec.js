@@ -139,6 +139,7 @@ jest.mock('openid-client', () => {
       expires_in: 3600,
     }),
     customFetch: Symbol('customFetch'),
+    allowInsecureRequests: jest.fn(),
   };
 });
 
@@ -230,6 +231,7 @@ describe('setupOpenId', () => {
 
     // Reset environment variables needed by the strategy
     process.env.OPENID_ISSUER = 'https://fake-issuer.com';
+    delete process.env.OPENID_ALLOW_INSECURE_LOCALHOST;
     process.env.OPENID_CLIENT_ID = 'fake_client_id';
     process.env.OPENID_CLIENT_SECRET = 'fake_client_secret';
     process.env.DOMAIN_SERVER = 'https://example.com';
@@ -283,6 +285,33 @@ describe('setupOpenId', () => {
     // (not 'openidAdmin' which requires existing users)
     await setupOpenId();
     verifyCallback = require('openid-client/passport').__getVerifyCallbackByName('openid');
+  });
+
+  describe('local HTTP opt-in', () => {
+    it('keeps HTTPS enforcement by default', async () => {
+      process.env.OPENID_ISSUER = 'http://localhost/SecurityPortal/tenant/CMF';
+      await setupOpenId();
+      expect(require('openid-client').discovery.mock.calls.at(-1)[4].execute).toBeUndefined();
+    });
+
+    it('passes the HTTP hook to discovery while preserving custom fetch', async () => {
+      const client = require('openid-client');
+      process.env.OPENID_ISSUER = 'http://localhost/SecurityPortal/tenant/CMF';
+      process.env.OPENID_ALLOW_INSECURE_LOCALHOST = 'true';
+      await setupOpenId();
+      const options = client.discovery.mock.calls.at(-1)[4];
+      expect(options.execute).toEqual([client.allowInsecureRequests]);
+      expect(options[client.customFetch]).toEqual(expect.any(Function));
+    });
+
+    it('rejects non-loopback HTTP before discovery', async () => {
+      const client = require('openid-client');
+      client.discovery.mockClear();
+      process.env.OPENID_ISSUER = 'http://identity.example.com';
+      process.env.OPENID_ALLOW_INSECURE_LOCALHOST = 'true';
+      expect(await setupOpenId()).toBeNull();
+      expect(client.discovery).not.toHaveBeenCalled();
+    });
   });
 
   describe('clientMetadata construction in setupOpenId', () => {
